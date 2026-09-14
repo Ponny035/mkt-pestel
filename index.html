@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PESTEL Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="eyebrow">PESTEL · market signal board</span>
+      <h1>Where should we place our bets?</h1>
+      <p>Drop a factor into the column it belongs to, then slide its dial toward risk (red) or opportunity (green). Anyone with this link edits it live.</p>
+    </div>
+    <div class="topbar-right">
+      <div class="view-toggle" role="tablist" aria-label="Board layout">
+        <button class="view-btn active" data-view="board" aria-pressed="true">Board</button>
+        <button class="view-btn" data-view="scale" aria-pressed="false">Scale</button>
+      </div>
+      <div class="you">
+        <span class="you-dot" id="youDot"></span>
+        <input id="youName" maxlength="24" aria-label="Your display name">
+      </div>
+      <div class="peers" id="peers" aria-label="Others viewing this board"></div>
+      <button class="btn btn-primary" id="exportOpen">Export board</button>
+    </div>
+  </header>
+
+  <div class="status-bar" id="statusBar" hidden></div>
+
+  <main class="board" id="board"></main>
+</div>
+
+<div class="overlay" id="exportOverlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+    <button class="sheet-close" id="exportClose" aria-label="Close">&times;</button>
+    <h3 id="exportTitle">Export board</h3>
+    <p>Pick a layout and canvas size, then choose a format. Exports always render in a fixed light palette for consistent printing and sharing.</p>
+    <div class="layout-toggle" id="layoutToggle">
+      <button class="layout-opt" data-layout="grid">Board grid</button>
+      <button class="layout-opt" data-layout="scale">Scale axis</button>
+    </div>
+    <div class="ratio-list" id="ratioList"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-primary" id="exportPng">Download PNG</button>
+      <button class="btn" id="exportPptx">Download PPTX (widescreen, one slide)</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
