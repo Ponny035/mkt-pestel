@@ -121,11 +121,24 @@
   var toastEl = document.getElementById('toast');
   var statusBar = document.getElementById('statusBar');
   var toastTimer = null;
-  function toast(msg){
-    toastEl.textContent = msg;
+  function toast(msg, opts){
+    opts = opts || {};
+    toastEl.innerHTML = '';
+    toastEl.appendChild(document.createTextNode(msg));
+    if(opts.actionLabel && opts.onAction){
+      var btn = document.createElement('button');
+      btn.className = 'toast-action';
+      btn.textContent = opts.actionLabel;
+      btn.addEventListener('click', function(){
+        toastEl.hidden = true;
+        clearTimeout(toastTimer);
+        opts.onAction();
+      });
+      toastEl.appendChild(btn);
+    }
     toastEl.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function(){ toastEl.hidden = true; }, 2600);
+    toastTimer = setTimeout(function(){ toastEl.hidden = true; }, opts.duration || 2600);
   }
   function setStatus(msg, isError){
     statusBar.hidden = false;
@@ -425,7 +438,14 @@
   function writeNote(id, patch){
     var n = notes.find(function(x){ return x.id===id; });
     if(n) Object.assign(n, patch);
-    render();
+    // Deferred by a frame rather than called synchronously: this write can
+    // land as a side effect of ANOTHER element's blur (e.g. leaving a
+    // note-text field to click Delete on a different card). Rebuilding the
+    // DOM synchronously inside that blur can destroy the button the user
+    // is mid-click on before the click event actually fires, silently
+    // swallowing the action. One frame is enough for the in-flight click
+    // to resolve first, and is imperceptible to the user.
+    requestAnimationFrame(render);
     if(!sb || previewMode) return;
     sb.from(TABLE).update(noteToRow(patch)).eq('id', id).then(function(res){
       if(res.error) toast('Could not save change.');
@@ -458,12 +478,38 @@
     });
   }
 
+  var lastDeleted = null;
+
   function deleteNote(id){
+    var note = notes.find(function(n){ return n.id===id; });
+    if(!note) return;
     notes = notes.filter(function(n){ return n.id!==id; });
     render();
+
+    lastDeleted = {category:note.category, text:note.text, impact:note.impact, link:note.link, order:note.order, author:note.author};
+    var preview = (note.text||'').trim().slice(0,40) || '(empty)';
+    toast('Deleted "'+preview+'"', {actionLabel:'Undo (Ctrl+Z)', onAction:undoLastDelete, duration:8000});
+
     if(!sb || previewMode) return;
     sb.from(TABLE).delete().eq('id', id).then(function(res){
       if(res.error) toast('Could not delete — try again.');
+    });
+  }
+
+  function undoLastDelete(){
+    if(!lastDeleted) return;
+    var restore = lastDeleted;
+    lastDeleted = null;
+    if(!sb || previewMode){
+      restore.id = 'local-'+uid();
+      notes.push(restore);
+      render();
+      return;
+    }
+    sb.from(TABLE).insert(noteToRow(restore)).select().single().then(function(res){
+      if(res.error){ toast('Could not undo — try again.'); return; }
+      var n = rowToNote(res.data);
+      if(!notes.some(function(x){ return x.id===n.id; })){ notes.push(n); render(); }
     });
   }
 
@@ -756,6 +802,15 @@
   document.getElementById('exportClose').addEventListener('click', function(){ overlay.hidden = true; });
   overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.hidden = true; });
   document.addEventListener('keydown', function(e){ if(e.key==='Escape' && !overlay.hidden) overlay.hidden = true; });
+  document.addEventListener('keydown', function(e){
+    var isUndo = (e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key==='z' || e.key==='Z');
+    if(!isUndo || !lastDeleted) return;
+    var active = document.activeElement;
+    var isTextField = active && (active.tagName==='TEXTAREA' || active.tagName==='INPUT');
+    if(isTextField) return; // let native text-undo work in fields instead
+    e.preventDefault();
+    undoLastDelete();
+  });
 
   function triggerDownload(filename, blob){
     var url = URL.createObjectURL(blob);

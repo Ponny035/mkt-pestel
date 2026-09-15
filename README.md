@@ -61,6 +61,15 @@ without risk. From there, the status bar gives you two choices:
 - **Return to live board** — discards the preview and reconnects to the
   live, synced board with no changes made.
 
+## Undoing a delete
+
+Deleting a factor shows a toast with an **Undo** button for 8 seconds, and
+**Ctrl+Z** (or Cmd+Z) does the same thing as long as you're not currently
+typing in a text field (there, Ctrl+Z is left alone for normal text-undo).
+The delete itself happens immediately — undo works by re-adding the note,
+not by delaying the delete — so it's never silently lost if you close the
+tab right after deleting.
+
 ## Notes
 
 - There's no login, so anyone with the link can edit or delete anything —
@@ -70,10 +79,14 @@ without risk. From there, the status bar gives you two choices:
 
 ## Running the automated test
 
-`test-e2e.js` is a Playwright end-to-end check covering Save, Load, the
-Restore-to-live-board flow (against your real configured Supabase table —
-it adds one uniquely-marked temp note, saves, deletes it, restores it,
-then cleans it up), and all three exports (PNG, PDF, PPTX).
+Both files run against your real configured Supabase table (each adds
+uniquely-marked temp notes and cleans them up afterward):
+
+- `test-e2e.js` — Save, Load, the Restore-to-live-board flow, and all
+  three exports (PNG, PDF, PPTX)
+- `test-undo.js` — deleting a note, undoing via the toast button, undoing
+  via Ctrl+Z, and that Ctrl+Z inside a text field never resurrects an
+  unrelated deleted note (native text-undo stays untouched there)
 
 ```
 npm install

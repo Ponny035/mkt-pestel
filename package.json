@@ -4,7 +4,7 @@
   "description": "A live, multi-user PESTEL analysis board with PNG/PDF/PPTX export, synced through Supabase.",
   "main": "app.js",
   "scripts": {
-    "test": "node test-e2e.js"
+    "test": "node test-e2e.js && node test-undo.js"
   },
   "repository": {
     "type": "git",
