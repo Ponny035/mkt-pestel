@@ -1,4 +1,4 @@
-# PESTEL Board — setup
+# PESTEL Board — setup 
 
 A live, multi-user PESTEL analysis board. Anyone with the link can add factors,
 score them from risk to opportunity, and export the board as a PNG or PPTX.
