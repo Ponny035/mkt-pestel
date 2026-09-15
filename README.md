@@ -1,4 +1,4 @@
-# PESTEL Board — setup 
+# PESTEL Board — setup
 
 A live, multi-user PESTEL analysis board. Anyone with the link can add factors,
 score them from risk to opportunity, and export the board as a PNG or PPTX.
@@ -44,17 +44,22 @@ drag the whole `pestel` folder onto one of these:
 Whoever you send the resulting link to can open it and start editing —
 changes, drags, and slider moves sync live for everyone with the page open.
 
-## Saving an offline copy
+## Backups: saving and restoring
 
 **Save file** (top bar) downloads the current board as one self-contained
-`.html` file — open it later with no internet, no Supabase, no server. It's
-a snapshot, not a sync target: edits made inside a saved file stay in that
-file only.
+`.html` file — open it later with no internet, no Supabase, no server. Treat
+it as a point-in-time backup.
 
-**Load file** opens a previously saved `.html` snapshot into the page
-you're currently viewing, without touching the shared Supabase board —
-useful for reviewing an old version or working offline for a bit. It
-disconnects live sync until you reload the page.
+**Load file** opens a previously saved `.html` snapshot as a **preview** —
+it doesn't touch the shared Supabase board yet, so you can safely look
+without risk. From there, the status bar gives you two choices:
+
+- **Restore to live board** — replaces everyone's current data with the
+  snapshot's. This deletes every row on the shared board first, so it asks
+  for a confirmation and cannot be undone. Use it when the live board got
+  messed up and you want to roll back to a known-good backup.
+- **Return to live board** — discards the preview and reconnects to the
+  live, synced board with no changes made.
 
 ## Notes
 
@@ -62,3 +67,17 @@ disconnects live sync until you reload the page.
   the same trust model as sharing an editable Google Doc link.
 - If Supabase isn't configured yet, the app falls back to a local demo (no
   sync) so you can still see how it looks.
+
+## Running the automated test
+
+`test-e2e.js` is a Playwright end-to-end check covering Save, Load, the
+Restore-to-live-board flow (against your real configured Supabase table —
+it adds one uniquely-marked temp note, saves, deletes it, restores it,
+then cleans it up), and all three exports (PNG, PDF, PPTX).
+
+```
+npm install
+npx playwright install chromium   # first time only
+npx serve . -l 4173               # in one terminal, leave running
+npm test                          # in another terminal
+```

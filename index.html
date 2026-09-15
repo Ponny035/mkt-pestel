@@ -29,7 +29,7 @@
       </div>
       <div class="peers" id="peers" aria-label="Others viewing this board"></div>
       <button class="btn" id="saveSnapshot" title="Save the current board as an offline .html file">Save file</button>
-      <button class="btn" id="loadSnapshot" title="Open a previously saved board file — view-only, not synced">Load file</button>
+      <button class="btn" id="loadSnapshot" title="Open a previously saved board file to preview, or restore it to the live board">Load file</button>
       <input type="file" id="loadSnapshotInput" accept=".html,.htm" hidden>
       <button class="btn btn-primary" id="exportOpen">Export board</button>
     </div>
@@ -53,6 +53,7 @@
     <div class="ratio-list" id="ratioList"></div>
     <div class="sheet-actions">
       <button class="btn btn-primary" id="exportPng">Download PNG</button>
+      <button class="btn" id="exportPdf">Download PDF (A4, for documents)</button>
       <button class="btn" id="exportPptx">Download PPTX (widescreen, one slide)</button>
     </div>
   </div>
@@ -62,6 +63,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
 </body>

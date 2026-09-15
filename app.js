@@ -103,6 +103,7 @@
 
   // ---------------- state ----------------
   var sb = null, notesChannel = null, presenceChannel = null, connected = false;
+  var previewMode = false, previewFileName = null;
   var notes = [];
   var draftText = {};
   var textTimers = {};
@@ -130,6 +131,17 @@
     statusBar.hidden = false;
     statusBar.classList.toggle('error', !!isError);
     statusBar.innerHTML = '<span class="status-dot"></span><span>'+escapeHtml(msg)+'</span>';
+  }
+  function setPreviewStatus(fileName){
+    statusBar.hidden = false;
+    statusBar.classList.add('error');
+    statusBar.innerHTML =
+      '<span class="status-dot"></span>' +
+      '<span>Previewing "'+escapeHtml(fileName)+'" — not synced, and no one else can see this.</span>' +
+      '<span class="status-actions">' +
+        '<button class="status-btn" id="statusRestore">Restore to live board</button>' +
+        '<button class="status-btn" id="statusReturn">Return to live board</button>' +
+      '</span>';
   }
 
   function columnNotes(code){
@@ -395,7 +407,7 @@
     var n = notes.find(function(x){ return x.id===id; });
     if(n) Object.assign(n, patch);
     render();
-    if(!sb) return;
+    if(!sb || previewMode) return;
     sb.from(TABLE).update(noteToRow(patch)).eq('id', id).then(function(res){
       if(res.error) toast('Could not save change.');
     });
@@ -405,7 +417,7 @@
     var list = columnNotes(catCode);
     var order = list.length ? Math.max.apply(null, list.map(function(n){ return n.order||0; }))+1 : 0;
     var base = {category:catCode, text:'', impact:0, link:'', order:order, author:{name:myPeer.name,color:myPeer.color}};
-    if(!sb){
+    if(!sb || previewMode){
       base.id = 'local-'+uid();
       notes.push(base);
       render();
@@ -430,7 +442,7 @@
   function deleteNote(id){
     notes = notes.filter(function(n){ return n.id!==id; });
     render();
-    if(!sb) return;
+    if(!sb || previewMode) return;
     sb.from(TABLE).delete().eq('id', id).then(function(res){
       if(res.error) toast('Could not delete — try again.');
     });
@@ -736,6 +748,10 @@
 
   function iconDataUri(code, hex){
     var svg = CAT_ICON[code].replace(/currentColor/g, hex);
+    // Standalone SVG (as an <img> src) requires the xmlns declaration or
+    // the browser silently refuses to decode it — inline HTML doesn't need
+    // it, which is why this only breaks when used as an image source.
+    svg = svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
     return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
   }
 
@@ -953,34 +969,45 @@
     var ctx = canvas.getContext('2d');
     ctx.fillStyle = EXPORT_BG; ctx.fillRect(0,0,r.w,r.h);
 
-    var pad = r.w*0.028;
-    var headerH = r.h*0.1;
+    // A single scale reference (shorter of the two dimensions) keeps the
+    // header proportioned consistently across every aspect ratio — using
+    // canvas height alone blew this up for a tall A4 canvas and drove the
+    // dot-grid decoration straight through the title text.
+    var pad = Math.min(r.w, r.h) * 0.03;
 
-    // top-left dot grid + top-right accent square, matching the deck frame
-    var dotR = r.h*0.0035, dotGap = r.h*0.02;
+    // top-left dot grid, positioned first so everything below it is laid
+    // out from its actual measured bottom edge — never a fixed fraction
+    // that can collide depending on aspect ratio.
+    var dotR = pad*0.14, dotGap = pad*0.85;
     ctx.fillStyle = EXPORT_ACCENT;
-    for(var dr=0; dr<3; dr++){
+    for(var dr=0; dr<2; dr++){
       for(var dc=0; dc<4; dc++){
         ctx.beginPath();
-        ctx.arc(pad+dc*dotGap, pad*0.6+dr*dotGap, dotR, 0, Math.PI*2);
+        ctx.arc(pad+dc*dotGap, pad*0.5+dr*dotGap, dotR, 0, Math.PI*2);
         ctx.fill();
       }
     }
-    var sq = r.h*0.032;
-    ctx.fillRect(r.w-pad-sq, pad*0.5, sq, sq);
+    var dotGridBottom = pad*0.5 + dotGap + dotR;
 
+    var sq = pad*1.1;
+    ctx.fillRect(r.w-pad-sq, pad*0.4, sq, sq);
+
+    var titleFontPx = pad*2.3;
     ctx.fillStyle = EXPORT_ACCENT;
-    ctx.font = '800 ' + Math.round(r.h*0.038) + 'px "Work Sans", sans-serif';
+    ctx.font = '800 ' + Math.round(titleFontPx) + 'px "Work Sans", sans-serif';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('PESTEL ANALYSIS', pad, pad+headerH*0.42);
+    var titleY = dotGridBottom + titleFontPx*0.95;
+    ctx.fillText('PESTEL ANALYSIS', pad, titleY);
     var titleW = ctx.measureText('PESTEL ANALYSIS').width;
-    ctx.fillStyle = EXPORT_ACCENT;
-    ctx.fillRect(pad, pad+headerH*0.42+r.h*0.014, Math.min(titleW, r.w*0.14), r.h*0.0045);
-    ctx.fillStyle = EXPORT_DIM;
-    ctx.font = '600 ' + Math.round(r.h*0.016) + 'px "Work Sans", sans-serif';
-    ctx.fillText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), pad, pad+headerH*0.42+r.h*0.042);
+    var dividerY = titleY + pad*0.35, dividerH = pad*0.14;
+    ctx.fillRect(pad, dividerY, Math.min(titleW, r.w*0.14), dividerH);
 
-    var gridTop = pad+headerH, gridW = r.w-pad*2, gridH = r.h-gridTop-pad;
+    ctx.fillStyle = EXPORT_DIM;
+    ctx.font = '600 ' + Math.round(pad*1.1) + 'px "Work Sans", sans-serif';
+    var dateY = dividerY + dividerH + pad*0.9;
+    ctx.fillText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), pad, dateY);
+
+    var gridTop = dateY + pad*0.8, gridW = r.w-pad*2, gridH = r.h-gridTop-pad;
 
     if(layoutName==='scale'){
       var totalH = r.h*0.065;
@@ -1147,18 +1174,20 @@
     var rrt = pres.ShapeType && pres.ShapeType.roundRect ? pres.ShapeType.roundRect : rt;
     var ellipseType0 = pres.ShapeType && pres.ShapeType.ellipse ? pres.ShapeType.ellipse : 'ellipse';
 
-    // top-left dot grid + top-right accent square, matching the deck frame
-    for(var dr=0; dr<3; dr++){
+    // top-left dot grid, kept small and strictly above the title (it used
+    // to sit at the same y as the title text and print straight through
+    // it) + top-right accent square, matching the deck frame
+    for(var dr=0; dr<2; dr++){
       for(var dc=0; dc<4; dc++){
-        slide.addShape(ellipseType0, {x:0.35+dc*0.16, y:0.2+dr*0.16, w:0.05, h:0.05, fill:{color:EXPORT_ACCENT.replace('#','')}, line:{type:'none'}});
+        slide.addShape(ellipseType0, {x:0.4+dc*0.1, y:0.13+dr*0.1, w:0.035, h:0.035, fill:{color:EXPORT_ACCENT.replace('#','')}, line:{type:'none'}});
       }
     }
     slide.addShape(rt, {x:12.55, y:0.2, w:0.38, h:0.38, fill:{color:EXPORT_ACCENT.replace('#','')}, line:{type:'none'}});
 
     var title = 'PESTEL ANALYSIS' + (subtitle ? ' — ' + subtitle : '');
-    slide.addText(title, {x:0.4,y:0.22,w:10,h:0.5,fontFace:'Arial',fontSize:26,bold:true,color:EXPORT_ACCENT.replace('#','')});
-    slide.addShape(rt, {x:0.42,y:0.72,w:1.6,h:0.03,fill:{color:EXPORT_ACCENT.replace('#','')},line:{type:'none'}});
-    slide.addText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), {x:0.4,y:0.8,w:6,h:0.25,fontFace:'Arial',fontSize:10.5,color:EXPORT_DIM.replace('#','')});
+    slide.addText(title, {x:0.4,y:0.36,w:10,h:0.36,fontFace:'Arial',fontSize:22,bold:true,color:EXPORT_ACCENT.replace('#','')});
+    slide.addShape(rt, {x:0.42,y:0.72,w:1.4,h:0.025,fill:{color:EXPORT_ACCENT.replace('#','')},line:{type:'none'}});
+    slide.addText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), {x:0.4,y:0.78,w:6,h:0.2,fontFace:'Arial',fontSize:9.5,color:EXPORT_DIM.replace('#','')});
 
     if(layoutName==='scale'){
       buildScaleSlide(slide, pres, rt, icons);
@@ -1189,7 +1218,27 @@
     }).catch(function(){ toast('Could not prepare the export.'); });
   }
 
+  function exportPDF(){
+    if(!window.jspdf || !window.jspdf.jsPDF){ toast('PDF library failed to load — check your connection.'); return; }
+    loadIconBundle('#FFFFFF', 72).then(function(icons){
+      try{
+        var r = RATIOS.a4;
+        var pdf = new window.jspdf.jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+        var layouts = selectedLayout==='both' ? ['grid','scale'] : [selectedLayout];
+        layouts.forEach(function(layoutName, i){
+          var canvas = drawPngExport(r, icons, layoutName);
+          if(i>0) pdf.addPage();
+          pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297);
+        });
+        pdf.save('pestel-board-'+selectedLayout+'-a4.pdf');
+      }catch(err){
+        toast('Could not generate the PDF file.');
+      }
+    }).catch(function(){ toast('Could not prepare the export.'); });
+  }
+
   document.getElementById('exportPng').addEventListener('click', exportPNG);
+  document.getElementById('exportPdf').addEventListener('click', exportPDF);
   document.getElementById('exportPptx').addEventListener('click', exportPPTX);
 
   // ---------------- identity ----------------
@@ -1211,8 +1260,22 @@
     render();
   }
 
+  function regrowVisibleTextareas(){
+    var textareas = board.querySelectorAll('.note-text');
+    for(var i=0;i<textareas.length;i++){ autoGrow(textareas[i]); }
+  }
+
   function init(){
     render();
+
+    // The webfont (Work Sans) can still be swapping in when autoGrow first
+    // measures scrollHeight, sizing the textarea off fallback-font metrics
+    // — then the real font loads, text reflows, and the box is now too
+    // short with no re-measure, clipping the last line. Re-measure once
+    // fonts have actually settled.
+    if(window.document.fonts && document.fonts.ready){
+      document.fonts.ready.then(regrowVisibleTextareas);
+    }
 
     if(window.PESTEL_SNAPSHOT){
       notes = window.PESTEL_SNAPSHOT;
@@ -1309,6 +1372,10 @@
   }
 
   document.getElementById('saveSnapshot').addEventListener('click', function(){
+    if(location.protocol==='file:'){
+      toast('Save needs the page served over http(s) — open it via the live site or a local dev server, not a double-clicked file.');
+      return;
+    }
     buildSnapshotHtml().then(function(html){
       var stamp = new Date().toISOString().slice(0,10);
       triggerDownload('pestel-board-'+stamp+'.html', new Blob([html], {type:'text/html'}));
@@ -1331,13 +1398,73 @@
       try{ loaded = JSON.parse(match[1]); }catch(err){ toast('Could not read that file.'); return; }
       if(notesChannel){ notesChannel.unsubscribe(); notesChannel = null; }
       if(presenceChannel){ presenceChannel.unsubscribe(); presenceChannel = null; }
-      sb = null;
+      previewMode = true;
+      previewFileName = file.name;
       notes = loaded;
-      setStatus('Viewing "'+file.name+'" — changes stay on this device only. Reload the page to return to the live board.', true);
+      setPreviewStatus(file.name);
       render();
     };
     reader.onerror = function(){ toast('Could not read that file.'); };
     reader.readAsText(file);
+  });
+
+  function returnToLiveBoard(){
+    previewMode = false;
+    previewFileName = null;
+    if(!sb){
+      loadLocalDemo();
+      return;
+    }
+    sb.from(TABLE).select('*').then(function(res){
+      notes = (res.data||[]).map(rowToNote);
+      render();
+      setStatus('Live — synced with everyone on this link.');
+      subscribeRealtime();
+      subscribePresence();
+    });
+  }
+
+  function restoreToLiveBoard(){
+    if(!sb){ toast('Not connected to Supabase — nothing to restore to.'); return; }
+    var count = notes.length;
+    var ok = window.confirm(
+      'Replace the live board with "'+previewFileName+'"?\n\n' +
+      'This deletes all '+count+' factor(s) currently on the shared board for ' +
+      'everyone and replaces them with the ones from this file. This cannot be undone.'
+    );
+    if(!ok) return;
+    var restoreNotes = notes.slice();
+    var ZERO_UUID = '00000000-0000-0000-0000-000000000000';
+    sb.from(TABLE).delete().neq('id', ZERO_UUID).then(function(delRes){
+      if(delRes.error){ toast('Could not clear the live board — restore cancelled.'); return; }
+      var rows = restoreNotes.map(function(n, i){
+        return Object.assign(noteToRow(n), {order_index: n.order||i});
+      });
+      if(!rows.length){
+        previewMode = false; previewFileName = null;
+        notes = [];
+        setStatus('Live — synced with everyone on this link.');
+        subscribeRealtime(); subscribePresence();
+        toast('Restored an empty board.');
+        return;
+      }
+      sb.from(TABLE).insert(rows).select().then(function(insRes){
+        if(insRes.error){ toast('Restore failed while writing the backup — the live board may be partially cleared.'); return; }
+        previewMode = false;
+        previewFileName = null;
+        notes = (insRes.data||[]).map(rowToNote);
+        render();
+        setStatus('Live — synced with everyone on this link.');
+        subscribeRealtime();
+        subscribePresence();
+        toast('Restored ' + rows.length + ' factor(s) to the live board.');
+      });
+    });
+  }
+
+  statusBar.addEventListener('click', function(e){
+    if(e.target.id==='statusReturn') returnToLiveBoard();
+    if(e.target.id==='statusRestore') restoreToLiveBoard();
   });
 
   init();
