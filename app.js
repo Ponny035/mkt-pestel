@@ -218,8 +218,27 @@
     }
   }
 
+  var pendingRender = false;
+  function isEditingField(){
+    var active = document.activeElement;
+    return !!(active && active.classList && (active.classList.contains('note-text') || active.classList.contains('note-link-input')));
+  }
   function render(){
+    // A full re-render tears down and rebuilds every textarea's DOM node.
+    // Doing that while the user is mid-keystroke can drop the character
+    // that was about to land in the node that just got replaced — this is
+    // why typing felt like it couldn't keep up: every debounced save (and
+    // every realtime echo, including of your own edits) was rebuilding the
+    // whole board out from under you. Defer instead, and catch up the
+    // instant focus actually leaves the field.
+    if(isEditingField()){ pendingRender = true; return; }
+    pendingRender = false;
     if(viewMode==='scale') renderScale(); else renderBoard();
+  }
+  function flushPendingRender(){
+    requestAnimationFrame(function(){
+      if(pendingRender && !isEditingField()) render();
+    });
   }
 
   function renderBoard(){
@@ -617,6 +636,7 @@
   board.addEventListener('focusout', function(e){
     if(e.target.matches('.note-text')) flushText(e.target.dataset.id);
     if(e.target.matches('.note-link-input')) commitLink(e.target.dataset.id, e.target.value);
+    flushPendingRender();
   });
   board.addEventListener('keydown', function(e){
     if(e.target.matches('.note-link-input')){
