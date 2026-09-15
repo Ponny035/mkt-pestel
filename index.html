@@ -28,6 +28,9 @@
         <input id="youName" maxlength="24" aria-label="Your display name">
       </div>
       <div class="peers" id="peers" aria-label="Others viewing this board"></div>
+      <button class="btn" id="saveSnapshot" title="Save the current board as an offline .html file">Save file</button>
+      <button class="btn" id="loadSnapshot" title="Open a previously saved board file — view-only, not synced">Load file</button>
+      <input type="file" id="loadSnapshotInput" accept=".html,.htm" hidden>
       <button class="btn btn-primary" id="exportOpen">Export board</button>
     </div>
   </header>
@@ -45,6 +48,7 @@
     <div class="layout-toggle" id="layoutToggle">
       <button class="layout-opt" data-layout="grid">Board grid</button>
       <button class="layout-opt" data-layout="scale">Scale axis</button>
+      <button class="layout-opt" data-layout="both">Both</button>
     </div>
     <div class="ratio-list" id="ratioList"></div>
     <div class="sheet-actions">

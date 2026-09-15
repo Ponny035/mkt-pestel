@@ -11,6 +11,10 @@
   ];
 
   var CAT_HEX = {P:'#6E56CF', EC:'#2568C7', S:'#C7397A', T:'#1B9C9C', EN:'#4C9A2A', L:'#B9791C'};
+  // Export-only palette, matched to a specific Canva deck theme: light grey
+  // ground, one primary blue for chrome/branding, soft pastel-vivid tones
+  // per PESTEL category so they stay distinguishable without breaking theme.
+  var EXPORT_CAT_HEX = {P:'#7B68C4', EC:'#4886DA', S:'#E0766C', T:'#2FA6A3', EN:'#5CB85C', L:'#DDA23A'};
   var CAT_ICON = {
     P:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="21" x2="5" y2="3"/><path d="M5 4 L18 4 L15 8 L18 12 L5 12"/></svg>',
     EC: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="13" width="4" height="8"/><rect x="10" y="9" width="4" height="12"/><rect x="17" y="4" width="4" height="17"/></svg>',
@@ -21,7 +25,8 @@
   };
   var LIGHT_PALETTE = {neg:'#C7453B', mid:'#9C978A', pos:'#2E9E5B'};
   var DARK_PALETTE  = {neg:'#E2695D', mid:'#8B8678', pos:'#57C783'};
-  var EXPORT_BG='#F3F1EC', EXPORT_INK='#242019', EXPORT_DIM='#736C5C', EXPORT_LINE='#E1DCCF', EXPORT_CARD='#FFFFFF';
+  var EXPORT_BG='#F1F1F1', EXPORT_INK='#1A1A1A', EXPORT_DIM='#5C7A9E', EXPORT_LINE='#D6E3F2', EXPORT_CARD='#FFFFFF';
+  var EXPORT_ACCENT='#4886DA', EXPORT_ACCENT_LIGHT='#D6E3F2';
 
   var SEED = [
     {category:'P',  text:'Proposed import tariff changes could raise component costs 8-12% next fiscal year.', impact:-3, link:'https://www.trade.gov/tariff-updates'},
@@ -244,6 +249,41 @@
       return {note:n, lane:lane};
     });
     return {placements:placements, laneCount: laneLast.length};
+  }
+
+  // Fixed-height contexts (PNG/PPTX export) can't grow a row to fit more
+  // vertical lanes the way the live DOM view can. Once a row runs out of
+  // lanes, wrap: cycle back to lane 0 and nudge that note sideways near its
+  // true scale position instead of ever hiding a factor.
+  function layoutLanesWrapped(list, maxLanes){
+    maxLanes = Math.max(1, maxLanes);
+    var sorted = list.slice().sort(function(a,b){ return (a.impact||0)-(b.impact||0); });
+    var laneLast = [];
+    var placements = sorted.map(function(n){
+      var impact = n.impact||0;
+      var lane = 0;
+      while(laneLast[lane]!==undefined && Math.abs(impact-laneLast[lane]) < MIN_GAP){ lane++; }
+      laneLast[lane] = impact;
+      // row: which vertical lane it prints in (wraps once lanes run out).
+      // order: how many notes it collided with, in placement order — used
+      // to jitter its X position on the axis so two close/equal values
+      // never plot as the same dot, even when they land in different rows.
+      return {note:n, row: lane % maxLanes, order: lane};
+    });
+    // crowded: true if ANY collision happened in this row. When it has,
+    // every label in the row needs a narrow box — a note that got there
+    // first (order 0) still sits close enough to a jittered neighbor that
+    // its full-width label would swallow it regardless of the jitter.
+    return {placements: placements, crowded: laneLast.length > 1};
+  }
+  // Keeps a wrapped point within half a scale-unit of its true value — a
+  // note at -4 never drifts outside [-4.5, -3.5], however many wrap.
+  var JITTER_BAND = [0.5, -0.5, 0.25, -0.25, 0.4, -0.4, 0.15, -0.15];
+  function jitterValueOffset(wrap){
+    if(wrap<=0) return 0;
+    if(wrap-1 < JITTER_BAND.length) return JITTER_BAND[wrap-1];
+    var dir = wrap%2===0 ? -1 : 1;
+    return dir * (0.5 / (2 + Math.floor((wrap-JITTER_BAND.length)/2)));
   }
 
   function renderScale(){
@@ -694,6 +734,32 @@
     toast('Saved ' + filename);
   }
 
+  function iconDataUri(code, hex){
+    var svg = CAT_ICON[code].replace(/currentColor/g, hex);
+    return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+  }
+
+  function loadIconBundle(hex, pngSize){
+    var codes = CATS.map(function(c){ return c.code; });
+    return Promise.all(codes.map(function(code){
+      return new Promise(function(resolve){
+        var img = new Image();
+        img.onload = function(){
+          var c = document.createElement('canvas');
+          c.width = pngSize; c.height = pngSize;
+          c.getContext('2d').drawImage(img, 0, 0, pngSize, pngSize);
+          resolve({code:code, img:img, png:c.toDataURL('image/png')});
+        };
+        img.onerror = function(){ resolve({code:code, img:null, png:null}); };
+        img.src = iconDataUri(code, hex);
+      });
+    })).then(function(list){
+      var map = {};
+      list.forEach(function(item){ map[item.code] = item; });
+      return map;
+    });
+  }
+
   function roundRect(ctx,x,y,w,h,r){
     ctx.beginPath();
     ctx.moveTo(x+r,y);
@@ -728,25 +794,33 @@
     return lines;
   }
 
-  function drawCell(ctx, cat, x, y, w, h){
+  function drawCell(ctx, cat, x, y, w, h, icons){
     roundRect(ctx,x,y,w,h,10); ctx.fillStyle=EXPORT_CARD; ctx.fill();
     ctx.strokeStyle=EXPORT_LINE; ctx.lineWidth=1; roundRect(ctx,x,y,w,h,10); ctx.stroke();
 
     var headH = h*0.105;
     ctx.save();
     roundRect(ctx,x,y,w,h,10); ctx.clip();
-    ctx.fillStyle = CAT_HEX[cat.code]; ctx.fillRect(x,y,w,headH);
+    ctx.fillStyle = EXPORT_CAT_HEX[cat.code]; ctx.fillRect(x,y,w,headH);
     ctx.restore();
+
+    var icon = icons && icons[cat.code] && icons[cat.code].img;
+    var iconSize = Math.min(headH*0.52, 26);
+    var labelX = x+w*0.045;
+    if(icon){
+      ctx.drawImage(icon, labelX, y+(headH-iconSize)/2, iconSize, iconSize);
+      labelX += iconSize + 8;
+    }
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '700 ' + Math.round(headH*0.46) + 'px "Work Sans", sans-serif';
     ctx.textBaseline = 'middle';
-    ctx.fillText(cat.label.toUpperCase(), x+w*0.045, y+headH/2);
+    ctx.fillText(cat.label.toUpperCase(), labelX, y+headH/2);
 
     var list = columnNotes(cat.code);
     var innerX = x + w*0.045, innerW = w*0.91;
     var cy = y + headH + h*0.03;
     var maxBottom = y + h - h*0.03;
-    var fontPx = Math.max(11, Math.round(w*0.05));
+    var fontPx = clamp(Math.round(h*0.052), 11, 24);
     var lineH = fontPx*1.32;
 
     ctx.textBaseline = 'alphabetic';
@@ -760,7 +834,7 @@
         var remaining = list.length - i;
         if(remaining>0){
           ctx.fillStyle = EXPORT_DIM;
-          ctx.font = 'italic ' + Math.round(w*0.042) + 'px "Work Sans", sans-serif';
+          ctx.font = 'italic ' + clamp(Math.round(h*0.04), 10, 18) + 'px "Work Sans", sans-serif';
           ctx.fillText('+'+remaining+' more', innerX, maxBottom-6);
         }
         break;
@@ -776,57 +850,77 @@
       }
       if(n.link){
         ctx.fillStyle = EXPORT_DIM;
-        ctx.font = Math.round(fontPx*0.82) + 'px "IBM Plex Mono", monospace';
+        ctx.font = Math.round(fontPx*0.78) + 'px "IBM Plex Mono", monospace';
         ctx.fillText('↗ ' + linkDomain(n.link), innerX+20, cy+18+lines.length*lineH+linkLineH*0.7);
       }
       var scoreText = (n.impact>0?'+':'') + (n.impact||0);
       ctx.fillStyle = color;
-      ctx.font = '700 ' + Math.round(w*0.042) + 'px "IBM Plex Mono", monospace';
+      ctx.font = '700 ' + clamp(Math.round(h*0.038), 10, 20) + 'px "IBM Plex Mono", monospace';
       ctx.fillText(scoreText, innerX+innerW-9-ctx.measureText(scoreText).width, cy+noteH-9);
       cy += noteH + h*0.022;
     }
   }
 
-  function drawScaleRow(ctx, cat, x, y, w, h){
+  function drawScaleRow(ctx, cat, x, y, w, h, icons){
     roundRect(ctx,x,y,w,h,10); ctx.fillStyle=EXPORT_CARD; ctx.fill();
     ctx.strokeStyle=EXPORT_LINE; ctx.lineWidth=1; roundRect(ctx,x,y,w,h,10); ctx.stroke();
 
-    var padX = w*0.02;
-    var labelW = Math.min(w*0.16, 190);
-    var axisY = y + h*0.24;
-    var axisX0 = x + padX + labelW, axisX1 = x + w - padX;
-
+    var padX = w*0.02, padY = h*0.09;
     var list = columnNotes(cat.code);
     var sum = list.reduce(function(a,n){ return a+(n.impact||0); }, 0);
+    var sumLabel = (sum>0?'+':'') + sum;
     var netColor = impactColor(sum, LIGHT_PALETTE);
 
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = EXPORT_INK;
-    ctx.font = '700 ' + Math.round(h*0.14) + 'px "Work Sans", sans-serif';
-    ctx.fillText(cat.label, x+padX, y+h*0.2);
-    ctx.fillStyle = netColor;
-    ctx.font = '600 ' + Math.round(h*0.1) + 'px "IBM Plex Mono", monospace';
-    ctx.fillText('net ' + (sum>0?'+':'') + sum, x+padX, y+h*0.32);
+    var badgeR = clamp(h*0.09, 9, 20);
+    var badgeCx = x + padX + badgeR, badgeCy = y + padY + badgeR;
+    ctx.beginPath(); ctx.arc(badgeCx, badgeCy, badgeR, 0, Math.PI*2); ctx.fillStyle = netColor; ctx.fill();
+    var icon = icons && icons[cat.code] && icons[cat.code].img;
+    if(icon){
+      var isz = badgeR*1.15;
+      ctx.drawImage(icon, badgeCx-isz/2, badgeCy-isz/2, isz, isz);
+    }
 
+    var nameFont = clamp(Math.round(h*0.095), 12, 22);
+    var scoreFont = clamp(Math.round(h*0.07), 9, 15);
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = '700 ' + nameFont + 'px "Work Sans", sans-serif';
+    var nameWidth = ctx.measureText(cat.label).width;
+    var textY1 = badgeCy + badgeR + nameFont*0.95;
+    ctx.fillStyle = EXPORT_INK;
+    ctx.fillText(cat.label, x+padX, textY1);
+    ctx.font = '600 ' + scoreFont + 'px "IBM Plex Mono", monospace';
+    var scoreWidth = ctx.measureText('net '+sumLabel).width;
+    var textY2 = textY1 + scoreFont*1.5;
+    ctx.fillStyle = netColor;
+    ctx.fillText('net ' + sumLabel, x+padX, textY2);
+
+    var labelW = clamp(Math.max(badgeR*2+10, nameWidth+2, scoreWidth+2) + padX, 80, w*0.3);
+    var axisY = Math.max(textY2 + h*0.09, y + padY + badgeR*2 + h*0.06);
+    var axisX0 = x + labelW, axisX1 = x + w - padX;
+
+    var tickFont = clamp(Math.round(h*0.055), 8, 13);
     ctx.strokeStyle = EXPORT_LINE; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(axisX0, axisY); ctx.lineTo(axisX1, axisY); ctx.stroke();
     ctx.fillStyle = EXPORT_DIM;
-    ctx.font = Math.round(h*0.075) + 'px "IBM Plex Mono", monospace';
-    ctx.fillText('−5', axisX0-4, axisY-8);
+    ctx.font = tickFont + 'px "IBM Plex Mono", monospace';
+    ctx.fillText('−5', axisX0-4, axisY-tickFont*0.8);
     ctx.textAlign = 'right';
-    ctx.fillText('+5', axisX1+4, axisY-8);
+    ctx.fillText('+5', axisX1+4, axisY-tickFont*0.8);
     ctx.textAlign = 'left';
 
-    var layout = layoutLanes(list);
-    var labelFont = Math.max(9, Math.round(h*0.062));
-    var laneStep = Math.max(labelFont*2.6, h*0.16);
+    var labelFont = clamp(Math.round(h*0.058), 9, 15);
+    var laneStep = Math.max(labelFont*2.6, h*0.15);
+    var maxBottom = y + h - h*0.04;
+    var maxLanes = Math.max(1, Math.floor((maxBottom - (axisY+h*0.13)) / laneStep));
+    var unitPx = (axisX1-axisX0)/10;
 
-    layout.placements.forEach(function(p){
+    var scaleLayout = layoutLanesWrapped(list, maxLanes);
+    scaleLayout.placements.forEach(function(p){
       var n = p.note, impact = n.impact||0;
-      var px = axisX0 + ((clamp(impact,-5,5)+5)/10) * (axisX1-axisX0);
+      var plottedImpact = clamp(impact + jitterValueOffset(p.order), -5, 5);
+      var px = axisX0 + ((plottedImpact+5)/10) * (axisX1-axisX0);
       var color = impactColor(impact, LIGHT_PALETTE);
-      var labelY = axisY + h*0.14 + p.lane*laneStep;
-      if(labelY > y+h-8) return;
+      var labelY = axisY + h*0.13 + p.row*laneStep;
 
       ctx.strokeStyle = color; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(px, axisY); ctx.lineTo(px, labelY-labelFont*0.9); ctx.stroke();
@@ -836,9 +930,9 @@
       ctx.font = labelFont + 'px "Work Sans", sans-serif';
       ctx.fillStyle = EXPORT_INK;
       ctx.textAlign = 'center';
-      var maxW = Math.min(w*0.22, 220);
+      var maxW = scaleLayout.crowded ? clamp(unitPx*0.9, 40, 120) : clamp(w*0.16, 90, 240);
       var line = wrapText(ctx, n.text, maxW, 1)[0];
-      ctx.fillText(line, Math.max(x+padX+maxW/2, Math.min(px, x+w-padX-maxW/2)), labelY);
+      ctx.fillText(line, Math.max(axisX0+maxW/2, Math.min(px, axisX1-maxW/2)), labelY);
       ctx.textAlign = 'left';
     });
   }
@@ -853,32 +947,64 @@
     return RATIOS[selectedRatio];
   }
 
-  function exportPNG(){
-    var r = resolveRatio();
+  function drawPngExport(r, icons, layoutName){
     var canvas = document.createElement('canvas');
     canvas.width = r.w; canvas.height = r.h;
     var ctx = canvas.getContext('2d');
     ctx.fillStyle = EXPORT_BG; ctx.fillRect(0,0,r.w,r.h);
 
     var pad = r.w*0.028;
-    var headerH = r.h*0.085;
-    ctx.fillStyle = EXPORT_INK;
-    ctx.font = '600 ' + Math.round(r.h*0.034) + 'px "Work Sans", sans-serif';
+    var headerH = r.h*0.1;
+
+    // top-left dot grid + top-right accent square, matching the deck frame
+    var dotR = r.h*0.0035, dotGap = r.h*0.02;
+    ctx.fillStyle = EXPORT_ACCENT;
+    for(var dr=0; dr<3; dr++){
+      for(var dc=0; dc<4; dc++){
+        ctx.beginPath();
+        ctx.arc(pad+dc*dotGap, pad*0.6+dr*dotGap, dotR, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+    var sq = r.h*0.032;
+    ctx.fillRect(r.w-pad-sq, pad*0.5, sq, sq);
+
+    ctx.fillStyle = EXPORT_ACCENT;
+    ctx.font = '800 ' + Math.round(r.h*0.038) + 'px "Work Sans", sans-serif';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('PESTEL Analysis', pad, pad+headerH*0.5);
+    ctx.fillText('PESTEL ANALYSIS', pad, pad+headerH*0.42);
+    var titleW = ctx.measureText('PESTEL ANALYSIS').width;
+    ctx.fillStyle = EXPORT_ACCENT;
+    ctx.fillRect(pad, pad+headerH*0.42+r.h*0.014, Math.min(titleW, r.w*0.14), r.h*0.0045);
     ctx.fillStyle = EXPORT_DIM;
-    ctx.font = Math.round(r.h*0.017) + 'px "Work Sans", sans-serif';
-    ctx.fillText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), pad, pad+headerH*0.5+r.h*0.026);
+    ctx.font = '600 ' + Math.round(r.h*0.016) + 'px "Work Sans", sans-serif';
+    ctx.fillText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), pad, pad+headerH*0.42+r.h*0.042);
 
     var gridTop = pad+headerH, gridW = r.w-pad*2, gridH = r.h-gridTop-pad;
 
-    if(selectedLayout==='scale'){
+    if(layoutName==='scale'){
+      var totalH = r.h*0.065;
       var rowGap = r.h*0.012;
-      var rowH = (gridH - rowGap*5)/6;
+      var rowsAreaH = gridH - totalH;
+      var rowH = (rowsAreaH - rowGap*5)/6;
       CATS.forEach(function(cat,i){
         var y = gridTop + i*(rowH+rowGap);
-        drawScaleRow(ctx, cat, pad, y, gridW, rowH);
+        drawScaleRow(ctx, cat, pad, y, gridW, rowH, icons);
       });
+
+      var total = notes.reduce(function(a,n){ return a+(n.impact||0); }, 0);
+      var totalLabel = (total>0?'+':'') + total;
+      var totalColor = impactColor(total, LIGHT_PALETTE);
+      var totalCx = pad + gridW/2, totalCy = gridTop + rowsAreaH + totalH*0.5;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = EXPORT_DIM;
+      ctx.font = '600 ' + Math.round(totalH*0.24) + 'px "IBM Plex Mono", monospace';
+      ctx.fillText('TOTAL EFFECT', totalCx, totalCy - totalH*0.14);
+      ctx.fillStyle = totalColor;
+      ctx.font = '700 ' + Math.round(totalH*0.52) + 'px "IBM Plex Mono", monospace';
+      ctx.fillText(totalLabel, totalCx, totalCy + totalH*0.32);
+      ctx.textAlign = 'left';
     } else {
       var gap = r.w*0.013;
       var cellW = (gridW - gap*(r.cols-1))/r.cols;
@@ -886,33 +1012,53 @@
       CATS.forEach(function(cat,i){
         var col = i % r.cols, row = Math.floor(i/r.cols);
         var x = pad + col*(cellW+gap), y = gridTop + row*(cellH+gap);
-        drawCell(ctx, cat, x, y, cellW, cellH);
+        drawCell(ctx, cat, x, y, cellW, cellH, icons);
       });
     }
 
-    var sizeTag = selectedRatio==='custom' ? ('custom-'+r.w+'x'+r.h) : selectedRatio;
-    canvas.toBlob(function(blob){
-      triggerDownload('pestel-board-'+selectedLayout+'-'+sizeTag+'.png', blob);
-    }, 'image/png');
+    return canvas;
   }
 
-  function buildGridSlide(slide, rt, rrt){
+  function exportPNG(){
+    loadIconBundle('#FFFFFF', 72).then(function(icons){
+      var r = resolveRatio();
+      var sizeTag = selectedRatio==='custom' ? ('custom-'+r.w+'x'+r.h) : selectedRatio;
+      var layouts = selectedLayout==='both' ? ['grid','scale'] : [selectedLayout];
+      layouts.forEach(function(layoutName, i){
+        var canvas = drawPngExport(r, icons, layoutName);
+        setTimeout(function(){
+          canvas.toBlob(function(blob){
+            triggerDownload('pestel-board-'+layoutName+'-'+sizeTag+'.png', blob);
+          }, 'image/png');
+        }, i*300);
+      });
+    }).catch(function(){ toast('Could not prepare the export.'); });
+  }
+
+  function buildGridSlide(slide, rt, rrt, icons){
     var left=0.4, right=0.4, top=1.12, bottom=7.5-0.3, gap=0.16;
     var colW = (13.333-left-right-gap*5)/6;
+    var charsPerLine = Math.max(10, Math.floor((colW-0.24)/0.065));
 
     CATS.forEach(function(cat,i){
       var x = left + i*(colW+gap);
-      slide.addShape(rrt, {x:x,y:top,w:colW,h:0.4,fill:{color:CAT_HEX[cat.code].replace('#','')},line:{type:'none'}});
-      slide.addText(cat.label.toUpperCase(), {x:x+0.05,y:top,w:colW-0.1,h:0.4,fontFace:'Arial',fontSize:10.5,bold:true,color:'FFFFFF',valign:'middle'});
+      slide.addShape(rrt, {x:x,y:top,w:colW,h:0.4,fill:{color:EXPORT_CAT_HEX[cat.code].replace('#','')},line:{type:'none'}});
+      var ic = icons && icons[cat.code];
+      var iconSz = 0.2, labelX = x+0.06, labelW = colW-0.12;
+      if(ic && ic.png){
+        slide.addImage({data:ic.png, x:x+0.06, y:top+(0.4-iconSz)/2, w:iconSz, h:iconSz});
+        labelX = x+0.06+iconSz+0.05; labelW = colW-0.12-iconSz-0.05;
+      }
+      slide.addText(cat.label.toUpperCase(), {x:labelX,y:top,w:labelW,h:0.4,fontFace:'Arial',fontSize:10.5,bold:true,color:'FFFFFF',valign:'middle',shrinkText:true});
 
       var cy = top+0.4+0.09;
       var list = columnNotes(cat.code);
       for(var j=0;j<list.length;j++){
         var n = list[j];
         var color = impactColor(n.impact||0, LIGHT_PALETTE).replace('#','');
-        var estLines = Math.max(1, Math.ceil(((n.text||'').length||6)/24));
+        var estLines = Math.max(1, Math.ceil(((n.text||'').length||6)/charsPerLine));
         var linkH = n.link ? 0.16 : 0;
-        var h = Math.min(0.3+estLines*0.2+linkH, bottom-cy-0.32);
+        var h = Math.min(0.32+estLines*0.22+linkH, bottom-cy-0.32);
         if(cy+0.35 > bottom){
           var remaining = list.length-j;
           if(remaining>0){
@@ -933,69 +1079,114 @@
     });
   }
 
-  function buildScaleSlide(slide, pres, rt){
-    var left=0.4, right=0.4, top=1.05, bottom=7.5-0.25, rowGap=0.1;
+  function buildScaleSlide(slide, pres, rt, icons){
+    var left=0.4, right=0.4, top=1.1, slideBottom=7.5-0.25, rowGap=0.1, totalH=0.42;
+    var bottom = slideBottom - totalH;
     var rowH = (bottom-top-rowGap*5)/6;
-    var labelW = 1.4;
+    var labelW = 1.7;
     var axisX0 = left+labelW, axisX1 = 13.333-right;
     var ellipseType = pres.ShapeType && pres.ShapeType.ellipse ? pres.ShapeType.ellipse : 'ellipse';
+    var badgeSz = 0.26;
+    var laneStep = 0.2;
+    var unitIn = (axisX1-axisX0)/10;
 
     CATS.forEach(function(cat,i){
       var y = top + i*(rowH+rowGap);
-      var axisY = y + rowH*0.3;
+      var axisY = y + badgeSz + 0.12;
+      var maxLanes = Math.max(1, Math.floor(((y+rowH-0.1) - axisY - 0.06) / laneStep));
       var list = columnNotes(cat.code);
       var sum = list.reduce(function(a,n){ return a+(n.impact||0); }, 0);
+      var sumLabel = (sum>0?'+':'')+sum;
       var netColor = impactColor(sum, LIGHT_PALETTE).replace('#','');
 
-      slide.addText(cat.label, {x:left,y:y,w:labelW-0.1,h:0.24,fontFace:'Georgia',fontSize:11.5,bold:true,color:EXPORT_INK.replace('#','')});
-      slide.addText('net '+(sum>0?'+':'')+sum, {x:left,y:y+0.22,w:labelW-0.1,h:0.2,fontFace:'Courier New',fontSize:8.5,color:netColor});
+      slide.addShape(ellipseType, {x:left,y:y,w:badgeSz,h:badgeSz,fill:{color:netColor},line:{type:'none'}});
+      var ic = icons && icons[cat.code];
+      if(ic && ic.png){
+        var isz = badgeSz*0.56;
+        slide.addImage({data:ic.png, x:left+(badgeSz-isz)/2, y:y+(badgeSz-isz)/2, w:isz, h:isz});
+      }
+      var textX = left+badgeSz+0.09, textW = labelW-badgeSz-0.15;
+      slide.addText(cat.label, {x:textX,y:y-0.02,w:textW,h:0.19,fontFace:'Georgia',fontSize:10,bold:true,color:EXPORT_INK.replace('#',''),shrinkText:true});
+      slide.addText('net '+sumLabel, {x:textX,y:y+0.14,w:textW,h:0.16,fontFace:'Courier New',fontSize:7.5,color:netColor,shrinkText:true});
 
       slide.addShape(rt, {x:axisX0,y:axisY,w:axisX1-axisX0,h:0.012,fill:{color:EXPORT_LINE.replace('#','')},line:{type:'none'}});
       slide.addText('−5', {x:axisX0-0.32,y:axisY-0.2,w:0.3,h:0.16,fontFace:'Courier New',fontSize:7,color:EXPORT_DIM.replace('#',''),align:'right'});
       slide.addText('+5', {x:axisX1+0.02,y:axisY-0.2,w:0.3,h:0.16,fontFace:'Courier New',fontSize:7,color:EXPORT_DIM.replace('#','')});
 
-      var layout = layoutLanes(list);
-      var laneStep = Math.max(0.3, (rowH-0.3)/2.4);
-      layout.placements.forEach(function(p){
+      var scaleLayout = layoutLanesWrapped(list, maxLanes);
+      scaleLayout.placements.forEach(function(p){
         var n = p.note, impact = n.impact||0;
-        var px = axisX0 + ((clamp(impact,-5,5)+5)/10) * (axisX1-axisX0);
+        var plottedImpact = clamp(impact + jitterValueOffset(p.order), -5, 5);
+        var px = axisX0 + ((plottedImpact+5)/10) * (axisX1-axisX0);
         var color = impactColor(impact, LIGHT_PALETTE).replace('#','');
-        var labelY = axisY + 0.1 + p.lane*laneStep;
-        if(labelY > y+rowH-0.16) return;
+        var labelY = axisY + 0.1 + p.row*laneStep;
 
         slide.addShape(rt, {x:px-0.006,y:axisY,w:0.012,h:labelY-axisY,fill:{color:color},line:{type:'none'}});
-        slide.addShape(ellipseType, {x:px-0.045,y:axisY-0.045,w:0.09,h:0.09,fill:{color:color},line:{type:'none'}});
+        slide.addShape(ellipseType, {x:px-0.04,y:axisY-0.04,w:0.08,h:0.08,fill:{color:color},line:{type:'none'}});
         var label = (n.text||'(empty)');
-        if(label.length>32) label = label.slice(0,31)+'…';
-        slide.addText(label, {x:px-0.9,y:labelY,w:1.8,h:0.2,fontFace:'Arial',fontSize:7.5,color:EXPORT_INK.replace('#',''),align:'center'});
+        var cap = scaleLayout.crowded ? 20 : 32;
+        if(label.length>cap) label = label.slice(0,cap-1)+'…';
+        var lw = scaleLayout.crowded ? clamp(unitIn*0.9, 0.5, 1.0) : 1.8;
+        slide.addText(label, {x:px-lw/2,y:labelY,w:lw,h:0.17,fontFace:'Arial',fontSize:7.5,color:EXPORT_INK.replace('#',''),align:'center',shrinkText:true});
       });
     });
+
+    var total = notes.reduce(function(a,n){ return a+(n.impact||0); }, 0);
+    var totalLabel = (total>0?'+':'') + total;
+    var totalColor = impactColor(total, LIGHT_PALETTE).replace('#','');
+    slide.addShape(rt, {x:left,y:bottom+0.06,w:13.333-left-right,h:0.01,fill:{color:EXPORT_LINE.replace('#','')},line:{type:'none'}});
+    slide.addText('TOTAL EFFECT', {x:0,y:bottom+0.12,w:13.333,h:0.14,fontFace:'Courier New',fontSize:8,color:EXPORT_DIM.replace('#',''),align:'center'});
+    slide.addText(totalLabel, {x:0,y:bottom+0.24,w:13.333,h:0.3,fontFace:'Courier New',bold:true,fontSize:18,color:totalColor,align:'center'});
+  }
+
+  function addPptxSlide(pres, icons, layoutName, subtitle){
+    var slide = pres.addSlide();
+    slide.background = {color: EXPORT_BG.replace('#','')};
+
+    var rt = pres.ShapeType && pres.ShapeType.rect ? pres.ShapeType.rect : 'rect';
+    var rrt = pres.ShapeType && pres.ShapeType.roundRect ? pres.ShapeType.roundRect : rt;
+    var ellipseType0 = pres.ShapeType && pres.ShapeType.ellipse ? pres.ShapeType.ellipse : 'ellipse';
+
+    // top-left dot grid + top-right accent square, matching the deck frame
+    for(var dr=0; dr<3; dr++){
+      for(var dc=0; dc<4; dc++){
+        slide.addShape(ellipseType0, {x:0.35+dc*0.16, y:0.2+dr*0.16, w:0.05, h:0.05, fill:{color:EXPORT_ACCENT.replace('#','')}, line:{type:'none'}});
+      }
+    }
+    slide.addShape(rt, {x:12.55, y:0.2, w:0.38, h:0.38, fill:{color:EXPORT_ACCENT.replace('#','')}, line:{type:'none'}});
+
+    var title = 'PESTEL ANALYSIS' + (subtitle ? ' — ' + subtitle : '');
+    slide.addText(title, {x:0.4,y:0.22,w:10,h:0.5,fontFace:'Arial',fontSize:26,bold:true,color:EXPORT_ACCENT.replace('#','')});
+    slide.addShape(rt, {x:0.42,y:0.72,w:1.6,h:0.03,fill:{color:EXPORT_ACCENT.replace('#','')},line:{type:'none'}});
+    slide.addText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), {x:0.4,y:0.8,w:6,h:0.25,fontFace:'Arial',fontSize:10.5,color:EXPORT_DIM.replace('#','')});
+
+    if(layoutName==='scale'){
+      buildScaleSlide(slide, pres, rt, icons);
+    } else {
+      buildGridSlide(slide, rt, rrt, icons);
+    }
   }
 
   function exportPPTX(){
     if(typeof PptxGenJS === 'undefined'){ toast('Export library failed to load — check your connection.'); return; }
-    try{
-      var pres = new PptxGenJS();
-      pres.defineLayout({name:'PESTEL', width:13.333, height:7.5});
-      pres.layout = 'PESTEL';
-      var slide = pres.addSlide();
-      slide.background = {color: EXPORT_BG.replace('#','')};
-      slide.addText('PESTEL Analysis', {x:0.4,y:0.22,w:8,h:0.5,fontFace:'Georgia',fontSize:26,bold:true,color:EXPORT_INK.replace('#','')});
-      slide.addText(new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'}), {x:0.4,y:0.66,w:6,h:0.3,fontFace:'Arial',fontSize:11,color:EXPORT_DIM.replace('#','')});
+    loadIconBundle('#FFFFFF', 72).then(function(icons){
+      try{
+        var pres = new PptxGenJS();
+        pres.defineLayout({name:'PESTEL', width:13.333, height:7.5});
+        pres.layout = 'PESTEL';
 
-      var rt = pres.ShapeType && pres.ShapeType.rect ? pres.ShapeType.rect : 'rect';
-      var rrt = pres.ShapeType && pres.ShapeType.roundRect ? pres.ShapeType.roundRect : rt;
+        if(selectedLayout==='both'){
+          addPptxSlide(pres, icons, 'grid', 'Board Grid');
+          addPptxSlide(pres, icons, 'scale', 'Scale Axis');
+        } else {
+          addPptxSlide(pres, icons, selectedLayout, null);
+        }
 
-      if(selectedLayout==='scale'){
-        buildScaleSlide(slide, pres, rt);
-      } else {
-        buildGridSlide(slide, rt, rrt);
+        pres.writeFile({fileName:'pestel-board-'+selectedLayout+'.pptx'}).catch(function(){ toast('Could not generate the PPTX file.'); });
+      }catch(err){
+        toast('Could not generate the PPTX file.');
       }
-
-      pres.writeFile({fileName:'pestel-board-'+selectedLayout+'.pptx'}).catch(function(){ toast('Could not generate the PPTX file.'); });
-    }catch(err){
-      toast('Could not generate the PPTX file.');
-    }
+    }).catch(function(){ toast('Could not prepare the export.'); });
   }
 
   document.getElementById('exportPng').addEventListener('click', exportPNG);
@@ -1022,6 +1213,13 @@
 
   function init(){
     render();
+
+    if(window.PESTEL_SNAPSHOT){
+      notes = window.PESTEL_SNAPSHOT;
+      setStatus('Viewing a saved snapshot — changes stay on this device only.', true);
+      render();
+      return;
+    }
 
     var cfg = window.PESTEL_CONFIG || {};
     var missing = !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY ||
@@ -1093,6 +1291,54 @@
       }
     });
   }
+
+  // ---------------- save / load a local .html snapshot ----------------
+  function buildSnapshotHtml(){
+    return Promise.all([
+      fetch('style.css').then(function(r){ return r.text(); }),
+      fetch('app.js').then(function(r){ return r.text(); }),
+      fetch(document.location.pathname || 'index.html').then(function(r){ return r.text(); })
+    ]).then(function(parts){
+      var css = parts[0], js = parts[1], html = parts[2];
+      html = html.replace('<link rel="stylesheet" href="style.css">', '<style>'+css+'</style>');
+      html = html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/@supabase\/supabase-js[^"]*"><\/script>\s*/, '');
+      html = html.replace('<script src="config.js"></script>', '<script>window.PESTEL_SNAPSHOT = '+JSON.stringify(notes)+';</script>');
+      html = html.replace('<script src="app.js"></script>', '<script>'+js+'</script>');
+      return html;
+    });
+  }
+
+  document.getElementById('saveSnapshot').addEventListener('click', function(){
+    buildSnapshotHtml().then(function(html){
+      var stamp = new Date().toISOString().slice(0,10);
+      triggerDownload('pestel-board-'+stamp+'.html', new Blob([html], {type:'text/html'}));
+    }).catch(function(){
+      toast('Could not build the save file — try a hard refresh first.');
+    });
+  });
+
+  var loadInput = document.getElementById('loadSnapshotInput');
+  document.getElementById('loadSnapshot').addEventListener('click', function(){ loadInput.click(); });
+  loadInput.addEventListener('change', function(e){
+    var file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      var match = String(reader.result).match(/window\.PESTEL_SNAPSHOT\s*=\s*(\[[\s\S]*?\]);/);
+      if(!match){ toast('That doesn\'t look like a saved board file.'); return; }
+      var loaded;
+      try{ loaded = JSON.parse(match[1]); }catch(err){ toast('Could not read that file.'); return; }
+      if(notesChannel){ notesChannel.unsubscribe(); notesChannel = null; }
+      if(presenceChannel){ presenceChannel.unsubscribe(); presenceChannel = null; }
+      sb = null;
+      notes = loaded;
+      setStatus('Viewing "'+file.name+'" — changes stay on this device only. Reload the page to return to the live board.', true);
+      render();
+    };
+    reader.onerror = function(){ toast('Could not read that file.'); };
+    reader.readAsText(file);
+  });
 
   init();
 })();

@@ -44,6 +44,18 @@ drag the whole `pestel` folder onto one of these:
 Whoever you send the resulting link to can open it and start editing —
 changes, drags, and slider moves sync live for everyone with the page open.
 
+## Saving an offline copy
+
+**Save file** (top bar) downloads the current board as one self-contained
+`.html` file — open it later with no internet, no Supabase, no server. It's
+a snapshot, not a sync target: edits made inside a saved file stay in that
+file only.
+
+**Load file** opens a previously saved `.html` snapshot into the page
+you're currently viewing, without touching the shared Supabase board —
+useful for reviewing an old version or working offline for a bit. It
+disconnects live sync until you reload the page.
+
 ## Notes
 
 - There's no login, so anyone with the link can edit or delete anything —
