@@ -54,6 +54,52 @@
     else { c=mid.map(function(m,i){ return lerp(m,pos[i],t); }); }
     return rgbToHex(c);
   }
+  // Aggregate score for one group of notes (a category column, or all notes):
+  // net = plain sum, avg = mean impact, wavg = each factor weighted by the
+  // size of its own impact (a +5 counts more than a +1 toward the average).
+  function groupScore(list, mode){
+    var count = list.length;
+    var sum = list.reduce(function(a,n){ return a+(n.impact||0); }, 0);
+    if(mode==='avg') return count ? sum/count : 0;
+    if(mode==='wavg'){
+      var wsum=0, wden=0;
+      list.forEach(function(n){
+        var impact = n.impact||0, w = Math.abs(impact);
+        wsum += impact*w; wden += w;
+      });
+      return wden ? wsum/wden : 0;
+    }
+    return sum;
+  }
+  // Board-wide total. For net it's just the grand sum. For avg/wavg it rolls
+  // up each category's score weighted by how many factors are in it, so a
+  // category with one factor doesn't count as much as one with five.
+  function totalScoreForMode(mode){
+    if(mode==='net') return notes.reduce(function(a,n){ return a+(n.impact||0); }, 0);
+    var wsum=0, wcount=0;
+    CATS.forEach(function(cat){
+      var list = columnNotes(cat.code);
+      if(!list.length) return;
+      wsum += groupScore(list, mode) * list.length;
+      wcount += list.length;
+    });
+    return wcount ? wsum/wcount : 0;
+  }
+  function formatScore(v, mode){
+    if(mode==='net'){
+      var iv = Math.round(v);
+      return (iv>0?'+':'') + iv;
+    }
+    var r = Math.round(v*10)/10;
+    if(r===0) r = 0; // avoid printing "-0.0"
+    return (r>0?'+':'') + r.toFixed(1);
+  }
+  function impactLabel(impact){
+    var a = Math.abs(Math.round(impact));
+    if(a<=1) return 'low impact';
+    if(a<=3) return 'mild impact';
+    return 'high impact';
+  }
   function isDark(){
     var attr=document.documentElement.getAttribute('data-theme');
     if(attr==='dark') return true;
@@ -109,6 +155,16 @@
   var textTimers = {};
   var editingLinks = {};
   var viewMode = 'board';
+  var SCORE_MODES = {
+    net:  {label:'net',   badge:'NET'},
+    avg:  {label:'avg',   badge:'AVG'},
+    wavg: {label:'w.avg', badge:'W.AVG'}
+  };
+  var scoreMode = (function(){
+    var v = null;
+    try{ v = localStorage.getItem('pestel-score-mode'); }catch(e){}
+    return SCORE_MODES.hasOwnProperty(v) ? v : 'net';
+  })();
   var myPeer = {
     id: localStorage.getItem('pestel-id') || uid(),
     name: localStorage.getItem('pestel-name') || (NAME_POOL[Math.floor(Math.random()*NAME_POOL.length)] + ' ' + Math.floor(Math.random()*90+10)),
@@ -173,14 +229,17 @@
     var impact = n.impact||0;
     var color = impactColor(impact, pal);
     var scoreText = (impact>0?'+':'') + impact;
+    var impactTag = impactLabel(impact).replace(' impact','');
+    var scoreTitle = scoreText + ' · ' + impactLabel(impact);
     var author = n.author && n.author.name ? n.author.name : 'Someone';
     var footerHtml = showScaleControl===false ?
       '<div class="note-footer note-footer-compact">' +
         '<button class="note-del" data-id="'+n.id+'" aria-label="Delete factor">&times;</button>' +
       '</div>' :
       '<div class="note-footer">' +
-        '<input type="range" class="note-slider" data-id="'+n.id+'" min="-5" max="5" step="1" value="'+impact+'" style="--thumb:'+color+'" aria-label="Impact, negative five to positive five">' +
-        '<span class="note-score" style="color:'+color+'">'+scoreText+'</span>' +
+        '<input type="range" class="note-slider" data-id="'+n.id+'" min="-5" max="5" step="1" value="'+impact+'" style="--thumb:'+color+'" aria-label="Impact, negative five to positive five" title="'+scoreTitle+'">' +
+        '<span class="note-impact-tag" data-id="'+n.id+'" title="'+scoreTitle+'">'+impactTag+'</span>' +
+        '<span class="note-score" style="color:'+color+'" title="'+scoreTitle+'">'+scoreText+'</span>' +
         '<button class="note-del" data-id="'+n.id+'" aria-label="Delete factor">&times;</button>' +
       '</div>';
     var linkHtml;
@@ -261,13 +320,13 @@
     var html = CATS.map(function(cat){
       var list = columnNotes(cat.code);
       var notesHtml = list.map(function(n){ return noteCardHtml(n, cat, pal, true); }).join('');
-      var sum = list.reduce(function(a,n){ return a+(n.impact||0); }, 0);
-      var sumLabel = (sum>0?'+':'') + sum;
+      var score = groupScore(list, scoreMode);
+      var scoreLabel = formatScore(score, scoreMode);
       return '' +
         '<section class="column" data-cat="'+cat.code+'">' +
           '<header class="column-head">' +
             '<div class="column-head-title"><span class="col-icon" aria-hidden="true">'+CAT_ICON[cat.code]+'</span><h2>'+cat.label+'</h2></div>' +
-            '<span class="column-count" title="Net impact across '+list.length+' factor'+(list.length===1?'':'s')+'">'+sumLabel+'</span>' +
+            '<span class="column-count" title="'+SCORE_MODES[scoreMode].label+' impact across '+list.length+' factor'+(list.length===1?'':'s')+'">'+scoreLabel+'</span>' +
           '</header>' +
           '<div class="notes" data-cat="'+cat.code+'">'+notesHtml+'</div>' +
           '<button class="add-note" data-cat="'+cat.code+'">+ Add factor</button>' +
@@ -337,9 +396,9 @@
 
     var rowsHtml = CATS.map(function(cat){
       var list = columnNotes(cat.code);
-      var sum = list.reduce(function(a,n){ return a+(n.impact||0); }, 0);
-      var sumLabel = (sum>0?'+':'') + sum;
-      var netColor = impactColor(sum, pal);
+      var score = groupScore(list, scoreMode);
+      var sumLabel = formatScore(score, scoreMode);
+      var netColor = impactColor(score, pal);
 
       var layout = layoutLanes(list);
       var laneCount = Math.max(1, layout.laneCount);
@@ -368,7 +427,7 @@
             '<div class="scale-topic" style="top:'+AXIS_TOP+'px">' +
               '<span class="scale-cat-badge" style="background:'+netColor+'" title="'+cat.label+'" aria-hidden="true">'+CAT_ICON[cat.code]+'</span>' +
               '<span class="scale-cat-name">'+cat.label+'</span>' +
-              '<span class="scale-net" style="color:'+netColor+'">'+sumLabel+'</span>' +
+              '<span class="scale-net" style="color:'+netColor+'" title="'+SCORE_MODES[scoreMode].label+' impact across '+list.length+' factor'+(list.length===1?'':'s')+'">'+SCORE_MODES[scoreMode].badge+' '+sumLabel+'</span>' +
             '</div>' +
             '<button class="scale-add" data-cat="'+cat.code+'" title="Add a '+cat.label+' factor">+</button>' +
             cardsHtml +
@@ -623,9 +682,13 @@
       card.classList.add(leftPct<38 ? 'anchor-left' : (leftPct>62 ? 'anchor-right' : 'anchor-center'));
       var slider = card.querySelector('.note-slider');
       var score = card.querySelector('.note-score');
+      var tag = card.querySelector('.note-impact-tag');
       var accent = card.querySelector('.note-accent');
-      if(slider){ slider.value = impact; slider.style.setProperty('--thumb', color); }
-      if(score){ score.textContent = (impact>0?'+':'')+impact; score.style.color = color; }
+      var scoreText = (impact>0?'+':'')+impact;
+      var scoreTitle = scoreText + ' · ' + impactLabel(impact);
+      if(slider){ slider.value = impact; slider.style.setProperty('--thumb', color); slider.title = scoreTitle; }
+      if(score){ score.textContent = scoreText; score.style.color = color; score.title = scoreTitle; }
+      if(tag){ tag.textContent = impactLabel(impact).replace(' impact',''); tag.title = scoreTitle; }
       if(accent) accent.style.background = color;
     }
     if(stem){ stem.style.left = leftPct+'%'; stem.style.setProperty('--chip', color); }
@@ -667,9 +730,14 @@
     if(e.target.matches('.note-slider')){
       var val = parseInt(e.target.value,10);
       var color = impactColor(val, onScreenPalette());
+      var scoreText = (val>0?'+':'')+val;
+      var scoreTitle = scoreText + ' · ' + impactLabel(val);
       e.target.style.setProperty('--thumb', color);
+      e.target.title = scoreTitle;
       var scoreEl = e.target.parentElement.querySelector('.note-score');
-      if(scoreEl){ scoreEl.textContent = (val>0?'+':'')+val; scoreEl.style.color = color; }
+      if(scoreEl){ scoreEl.textContent = scoreText; scoreEl.style.color = color; scoreEl.title = scoreTitle; }
+      var tagEl = e.target.parentElement.querySelector('.note-impact-tag');
+      if(tagEl){ tagEl.textContent = impactLabel(val).replace(' impact',''); tagEl.title = scoreTitle; }
       var accentEl = e.target.closest('.note').querySelector('.note-accent');
       if(accentEl) accentEl.style.background = color;
     }
@@ -717,6 +785,27 @@
       render();
     });
   });
+
+  var scoreModeButtons = document.querySelectorAll('.score-mode-btn');
+  scoreModeButtons.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      scoreMode = btn.dataset.mode;
+      try{ localStorage.setItem('pestel-score-mode', scoreMode); }catch(e){}
+      scoreModeButtons.forEach(function(b){
+        var active = b.dataset.mode===scoreMode;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      render();
+    });
+  });
+  (function initScoreModeButtons(){
+    scoreModeButtons.forEach(function(b){
+      var active = b.dataset.mode===scoreMode;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  })();
 
   // ---------------- export ----------------
   var RATIOS = {
@@ -948,6 +1037,10 @@
       ctx.fillStyle = color;
       ctx.font = '700 ' + clamp(Math.round(h*0.038), 10, 20) + 'px "IBM Plex Mono", monospace';
       ctx.fillText(scoreText, innerX+innerW-9-ctx.measureText(scoreText).width, cy+noteH-9);
+      ctx.fillStyle = EXPORT_DIM;
+      ctx.font = clamp(Math.round(h*0.026), 8, 13) + 'px "Work Sans", sans-serif';
+      var impactTag = impactLabel(n.impact||0).replace(' impact','');
+      ctx.fillText(impactTag, innerX+innerW-9-ctx.measureText(scoreText).width-6-ctx.measureText(impactTag).width, cy+noteH-9);
       cy += noteH + h*0.022;
     }
   }
@@ -958,9 +1051,9 @@
 
     var padX = w*0.02, padY = h*0.09;
     var list = columnNotes(cat.code);
-    var sum = list.reduce(function(a,n){ return a+(n.impact||0); }, 0);
-    var sumLabel = (sum>0?'+':'') + sum;
-    var netColor = impactColor(sum, LIGHT_PALETTE);
+    var score = groupScore(list, scoreMode);
+    var sumLabel = formatScore(score, scoreMode);
+    var netColor = impactColor(score, LIGHT_PALETTE);
 
     var badgeR = clamp(h*0.09, 9, 20);
     var badgeCx = x + padX + badgeR, badgeCy = y + padY + badgeR;
@@ -980,10 +1073,11 @@
     ctx.fillStyle = EXPORT_INK;
     ctx.fillText(cat.label, x+padX, textY1);
     ctx.font = '600 ' + scoreFont + 'px "IBM Plex Mono", monospace';
-    var scoreWidth = ctx.measureText('net '+sumLabel).width;
+    var netLine = SCORE_MODES[scoreMode].label + ' ' + sumLabel;
+    var scoreWidth = ctx.measureText(netLine).width;
     var textY2 = textY1 + scoreFont*1.5;
     ctx.fillStyle = netColor;
-    ctx.fillText('net ' + sumLabel, x+padX, textY2);
+    ctx.fillText(netLine, x+padX, textY2);
 
     var labelW = clamp(Math.max(badgeR*2+10, nameWidth+2, scoreWidth+2) + padX, 80, w*0.3);
     var axisY = Math.max(textY2 + h*0.09, y + padY + badgeR*2 + h*0.06);
@@ -1094,15 +1188,15 @@
         drawScaleRow(ctx, cat, pad, y, gridW, rowH, icons);
       });
 
-      var total = notes.reduce(function(a,n){ return a+(n.impact||0); }, 0);
-      var totalLabel = (total>0?'+':'') + total;
+      var total = totalScoreForMode(scoreMode);
+      var totalLabel = formatScore(total, scoreMode);
       var totalColor = impactColor(total, LIGHT_PALETTE);
       var totalCx = pad + gridW/2, totalCy = gridTop + rowsAreaH + totalH*0.5;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'alphabetic';
       ctx.fillStyle = EXPORT_DIM;
       ctx.font = '600 ' + Math.round(totalH*0.24) + 'px "IBM Plex Mono", monospace';
-      ctx.fillText('TOTAL EFFECT', totalCx, totalCy - totalH*0.14);
+      ctx.fillText('TOTAL EFFECT (' + SCORE_MODES[scoreMode].label.toUpperCase() + ')', totalCx, totalCy - totalH*0.14);
       ctx.fillStyle = totalColor;
       ctx.font = '700 ' + Math.round(totalH*0.52) + 'px "IBM Plex Mono", monospace';
       ctx.fillText(totalLabel, totalCx, totalCy + totalH*0.32);
@@ -1175,7 +1269,9 @@
           slide.addText('↗ ' + linkDomain(n.link), {x:x+0.1,y:cy+h-0.19,w:colW-0.55,h:0.16,fontFace:'Courier New',fontSize:7,color:EXPORT_DIM.replace('#',''),valign:'top'});
         }
         var scoreText = (n.impact>0?'+':'') + (n.impact||0);
+        var impactTag = impactLabel(n.impact||0).replace(' impact','');
         slide.addText(scoreText, {x:x+colW-0.5,y:cy+h-0.22,w:0.42,h:0.2,fontFace:'Courier New',fontSize:8,bold:true,color:color,align:'right'});
+        slide.addText(impactTag, {x:x+colW-0.92,y:cy+h-0.2,w:0.4,h:0.16,fontFace:'Arial',fontSize:6,color:EXPORT_DIM.replace('#',''),align:'right'});
         cy += h+0.08;
       }
     });
@@ -1197,9 +1293,9 @@
       var axisY = y + badgeSz + 0.12;
       var maxLanes = Math.max(1, Math.floor(((y+rowH-0.1) - axisY - 0.06) / laneStep));
       var list = columnNotes(cat.code);
-      var sum = list.reduce(function(a,n){ return a+(n.impact||0); }, 0);
-      var sumLabel = (sum>0?'+':'')+sum;
-      var netColor = impactColor(sum, LIGHT_PALETTE).replace('#','');
+      var score = groupScore(list, scoreMode);
+      var sumLabel = formatScore(score, scoreMode);
+      var netColor = impactColor(score, LIGHT_PALETTE).replace('#','');
 
       slide.addShape(ellipseType, {x:left,y:y,w:badgeSz,h:badgeSz,fill:{color:netColor},line:{type:'none'}});
       var ic = icons && icons[cat.code];
@@ -1209,7 +1305,7 @@
       }
       var textX = left+badgeSz+0.09, textW = labelW-badgeSz-0.15;
       slide.addText(cat.label, {x:textX,y:y-0.02,w:textW,h:0.19,fontFace:'Georgia',fontSize:10,bold:true,color:EXPORT_INK.replace('#',''),shrinkText:true});
-      slide.addText('net '+sumLabel, {x:textX,y:y+0.14,w:textW,h:0.16,fontFace:'Courier New',fontSize:7.5,color:netColor,shrinkText:true});
+      slide.addText(SCORE_MODES[scoreMode].label+' '+sumLabel, {x:textX,y:y+0.14,w:textW,h:0.16,fontFace:'Courier New',fontSize:7.5,color:netColor,shrinkText:true});
 
       slide.addShape(rt, {x:axisX0,y:axisY,w:axisX1-axisX0,h:0.012,fill:{color:EXPORT_LINE.replace('#','')},line:{type:'none'}});
       slide.addText('−5', {x:axisX0-0.32,y:axisY-0.2,w:0.3,h:0.16,fontFace:'Courier New',fontSize:7,color:EXPORT_DIM.replace('#',''),align:'right'});
@@ -1233,11 +1329,11 @@
       });
     });
 
-    var total = notes.reduce(function(a,n){ return a+(n.impact||0); }, 0);
-    var totalLabel = (total>0?'+':'') + total;
+    var total = totalScoreForMode(scoreMode);
+    var totalLabel = formatScore(total, scoreMode);
     var totalColor = impactColor(total, LIGHT_PALETTE).replace('#','');
     slide.addShape(rt, {x:left,y:bottom+0.06,w:13.333-left-right,h:0.01,fill:{color:EXPORT_LINE.replace('#','')},line:{type:'none'}});
-    slide.addText('TOTAL EFFECT', {x:0,y:bottom+0.12,w:13.333,h:0.14,fontFace:'Courier New',fontSize:8,color:EXPORT_DIM.replace('#',''),align:'center'});
+    slide.addText('TOTAL EFFECT ('+SCORE_MODES[scoreMode].label.toUpperCase()+')', {x:0,y:bottom+0.12,w:13.333,h:0.14,fontFace:'Courier New',fontSize:8,color:EXPORT_DIM.replace('#',''),align:'center'});
     slide.addText(totalLabel, {x:0,y:bottom+0.24,w:13.333,h:0.3,fontFace:'Courier New',bold:true,fontSize:18,color:totalColor,align:'center'});
   }
 

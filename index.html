@@ -17,11 +17,17 @@
       <span class="eyebrow">PESTEL · market signal board</span>
       <h1>Where should we place our bets?</h1>
       <p>Drop a factor into the column it belongs to, then slide its dial toward risk (red) or opportunity (green). Anyone with this link edits it live.</p>
+      <p class="impact-legend">Impact scale: <span>±1 low</span> · <span>±2–3 mild</span> · <span>±4–5 high</span></p>
     </div>
     <div class="topbar-right">
       <div class="view-toggle" role="tablist" aria-label="Board layout">
         <button class="view-btn active" data-view="board" aria-pressed="true">Board</button>
         <button class="view-btn" data-view="scale" aria-pressed="false">Scale</button>
+      </div>
+      <div class="view-toggle score-mode-toggle" role="tablist" aria-label="Score aggregation" title="Net = sum of impacts. Average = mean impact. Weighted avg. weights each factor by its own impact size, then rolls categories up by factor count.">
+        <button class="view-btn score-mode-btn active" data-mode="net" aria-pressed="true">Net</button>
+        <button class="view-btn score-mode-btn" data-mode="avg" aria-pressed="false">Avg</button>
+        <button class="view-btn score-mode-btn" data-mode="wavg" aria-pressed="false">W.avg</button>
       </div>
       <div class="you">
         <span class="you-dot" id="youDot"></span>

@@ -71,6 +71,11 @@ textarea{font-family:inherit;}
   margin:2px 0 0;
 }
 .brand p{margin:4px 0 0;color:var(--ink-dim);font-size:13px;max-width:52ch;}
+.impact-legend{
+  font-family:var(--font-mono);font-size:10.5px;color:var(--ink-dim);
+  letter-spacing:.01em;
+}
+.impact-legend span{white-space:nowrap;}
 
 .topbar-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .you{display:flex;align-items:center;gap:8px;}
@@ -189,6 +194,10 @@ textarea{font-family:inherit;}
 .note-slider::-moz-range-thumb{
   width:14px;height:14px;border-radius:50%;border:2px solid var(--surface);
   background:var(--thumb,#888);box-shadow:0 0 0 1px var(--line-strong);
+}
+.note-impact-tag{
+  font-family:var(--font-mono);font-size:9.5px;font-weight:600;color:var(--ink-dim);
+  text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;flex:none;
 }
 .note-score{
   font-family:var(--font-mono);font-size:12px;font-weight:600;width:2.4em;text-align:right;
